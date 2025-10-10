@@ -238,6 +238,7 @@ class MyWindow(QMainWindow):
             return
         self.json_schema_path = dialog.filepath
 
+
 if __name__ == '__main__':
     app = QApplication(sys.argv)
     app.setStyleSheet(

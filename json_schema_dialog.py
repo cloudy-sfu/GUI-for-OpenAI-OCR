@@ -9,6 +9,7 @@ from PyQt6.QtWidgets import *
 class SchemaEditor(QDialog):
     def __init__(self, path=None, parent=None):
         super().__init__(parent)
+        self.setWindowTitle("JSON Schema Editor")
         screen_size = self.screen().size()
         window_width = round(0.75 * screen_size.width())
         window_height = round(window_width / 1.6)
@@ -24,7 +25,7 @@ class SchemaEditor(QDialog):
         self.tree.setHeaderLabels(["Node", "", "Type", "Description"])
         # Show full text if there’s room
         self.tree.setTextElideMode(Qt.TextElideMode.ElideNone)
-        self.tree.itemSelectionChanged.connect(self.open_tree_selected)
+        self.tree.itemSelectionChanged.connect(self.view_node)
         self.path = []  # identical location to selected node
         self.tree.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
 
@@ -81,6 +82,12 @@ class SchemaEditor(QDialog):
         help_ = QAction("&Help", self)
         help_.triggered.connect(self.help)
         help_.setShortcut("F1")
+        del_node = QAction("&Delete", self)
+        del_node.triggered.connect(self.del_node)
+        del_node.setShortcut("Del")
+        add_node = QAction("&Add child", self)
+        add_node.triggered.connect(self.add_node)
+        add_node.setShortcut("Ctrl+N")
 
         # Menu bar -> Validate
         v_schema = QAction("Validate &schema", self)
@@ -89,6 +96,8 @@ class SchemaEditor(QDialog):
         # Menu bar -> First-level buttons
         edit_ = QMenu('&Edit', self)
         edit_.addActions([
+            add_node,
+            del_node,
             help_,
         ])
         validate = QMenu("&Validate", self)
@@ -105,7 +114,7 @@ class SchemaEditor(QDialog):
         # Dialog buttons
         dialog_buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        dialog_buttons.accepted.connect(self.accept)
+        dialog_buttons.accepted.connect(self.accept_)
         dialog_buttons.rejected.connect(self.reject)
 
         # Collect to main window
@@ -120,28 +129,34 @@ class SchemaEditor(QDialog):
         self.setLayout(layout_1)
 
         # Properties
-        self.initial_prevented = False
         default_schema = {
             "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
             "properties": {},
             "required": []
         }
+        self.filepath = path
         if path is None:
             self.schema = default_schema
+            self.initial_valid = True
         else:
             try:
                 with open(path, "r", encoding="utf-8") as f:
                     self.schema = json.load(f)
             # path=None is caught, so TypeError impossible
             except (FileNotFoundError, json.JSONDecodeError):
-                self.initial_prevented = True
                 self.schema = default_schema
+                self.initial_valid = False
                 self.icon_message(
-                    "Fail to open schema",
-                    "Schema file doesn't exist or isn't a schema.",
+                    "Validator",
+                    "Fail to open the schema. The file doesn't exist or isn't a "
+                    "schema.",
                     QStyle.StandardPixmap.SP_FileIcon,
                 )
+                return
+            self.initial_valid, message = self._validate_schema()
+            if not self.initial_valid:
+                self.silent_message("warn", "Validator", message)
                 return
         self.refresh_tree()
 
@@ -233,7 +248,7 @@ class SchemaEditor(QDialog):
         self.tree.resizeColumnToContents(1)
         self.tree.resizeColumnToContents(2)
 
-    def open_tree_selected(self):
+    def view_node(self):
         selected_items = self.tree.selectedItems()
         if len(selected_items) < 1:
             return
@@ -299,22 +314,21 @@ class SchemaEditor(QDialog):
             else:
                 self.silent_message("warn", "Validator", message)
             return
-        if not type_list:
-            self.silent_message(
-                "warn", "Invalid change", "Type cannot be empty.")
-            return
         p2 = path_to_dict_pointer(self.schema, self.path[:-2])
         p1 = p2[self.path[-2]]
         self_ = p1[self.path[-1]]
-        if len(type_list) == 1:
-            self_["type"] = type_list[0]
-        else:
-            self_["type"] = type_list
+        match len(type_list):
+            case 0:
+                del self_["type"]
+            case 1:
+                self_["type"] = type_list[0]
+            case 2:
+                self_["type"] = type_list
         if not is_array(p1.get("type")):  # Not element of array
             self_["description"] = description
             new_field_name = field_name
             old_field_name = self.path[-1]
-            required_set = set(p2["required"])
+            required_set = set(p2.get("required", []))
             # When renamed
             if new_field_name != old_field_name:
                 p1[new_field_name] = self_
@@ -332,6 +346,80 @@ class SchemaEditor(QDialog):
             self.refresh_tree()
         else:
             self.silent_message("warn", "Validator", message)
+
+    def del_node(self):
+        selected_items = self.tree.selectedItems()
+        if len(selected_items) < 1:
+            self.silent_message("info", "Selector", "No item selected.")
+            return
+        node = selected_items[0]
+        path = node_in_tree_to_path(node)
+        if not path:  # root node
+            self.silent_message(
+                "warn", "Validator", "Cannot delete the root.")
+            return
+        p2 = path_to_dict_pointer(self.schema, path[:-2])
+        p1 = p2[path[-2]]
+        field_name = path[-1]
+        required = p2.get("required", [])
+        if required and field_name in required:
+            p2["required"].remove(field_name)
+        del p1[field_name]
+        is_valid, message = self._validate_schema()
+        if is_valid:
+            self.refresh_tree()
+        else:
+            self.silent_message("warn", "Validator", message)
+
+    def add_node(self):
+        selected_items = self.tree.selectedItems()
+        if len(selected_items) < 1:
+            self.silent_message("info", "Selector", "No item selected.")
+            return
+        node = selected_items[0]
+        path = node_in_tree_to_path(node)
+        p2 = path_to_dict_pointer(self.schema, path)
+        p2_type = p2.get("type")
+        if is_array(p2_type):
+            p2.setdefault("items", {})
+        elif is_object(p2_type):
+            p2.setdefault("properties", {})
+            p1 = p2["properties"]
+            name, ok = QInputDialog.getText(self, "Add child", "Field name:")
+            if not ok:
+                return
+            if not name:
+                self.silent_message(
+                    "warn", "Validator", "Field name cannot be empty.")
+                return
+            if name in p1.keys():
+                self.silent_message(
+                    "warn", "Validator",
+                    "Field name occupied by a sibling item."
+                )
+                return
+            p1[name] = {}
+        else:
+            self.silent_message(
+                "warn", "Validator",
+                "Cannot add child item to an item whose type is not \"array or "
+                "object\"."
+            )
+            return
+        is_valid, message = self._validate_schema()
+        if is_valid:
+            self.refresh_tree()
+        else:
+            self.silent_message("warn", "Validator", message)
+
+    def accept_(self):
+        is_valid, message = self._validate_schema()
+        if not is_valid:
+            self.silent_message("warn", "Validator", message)
+            return
+        with open(self.filepath, "w") as f:
+            json.dump(self.schema, f, indent=4, ensure_ascii=False)
+        self.accept()
 
 
 def path_to_dict_pointer(dict_, path):
@@ -398,14 +486,23 @@ def json_to_tree(parent, dict_, required):
 
 
 def is_array(type_) -> bool:
-    if type_ is None:
+    return is_any_type(type_, "array")
+
+
+def is_object(type_) -> bool:
+    return is_any_type(type_, "object")
+
+
+def is_any_type(actual_type, expected_type) -> bool:
+    if actual_type is None:
         return False
-    elif isinstance(type_, str):
-        return type_ == "array"
-    elif isinstance(type_, list):
-        return "array" in type_
+    elif isinstance(actual_type, str):
+        return actual_type == expected_type
+    elif isinstance(actual_type, list):
+        return expected_type in actual_type
     else:
-        raise ValueError(f"JSON schema is invalid: field type \"{type_}\" is invalid.")
+        raise ValueError(
+            f"JSON schema is invalid: field type \"{actual_type}\" is invalid.")
 
 
 if __name__ == '__main__':
@@ -416,6 +513,7 @@ if __name__ == '__main__':
         f'    font-size: 12pt;'
         f'}}'
     )
-    dlg = SchemaEditor("tests/json_schema/user_profile.json")
-    # dlg = JsonSchemaEditorDialog()
-    dlg.exec()
+    dialog = SchemaEditor("tests/json_schema/user_profile.json")
+    action = dialog.exec()
+    if action != QDialog.DialogCode.Accepted:
+        pass
