@@ -1,22 +1,19 @@
 import base64
+import io
 import json
 import os
 import sys
 from functools import partial
 
+from PIL import Image
 from PyQt6.QtCore import Qt, QBuffer, QByteArray, QIODevice
 from PyQt6.QtGui import QAction
 from PyQt6.QtWidgets import *
 
 from config import Config
 from json_schema_dialog import SchemaEditor
+from ocr import OCR, BatchOCR
 from open_ai_config_dialog import OpenAIConfigDialog
-from ocr import OCR
-
-not_initialized_message = \
-"""Fail to connect to large language model. Possible reasons: \n
-(1) OpenAI API key is invalid. \n 
-"""
 
 
 class MyWindow(QMainWindow):
@@ -62,13 +59,13 @@ class MyWindow(QMainWindow):
 
     def create_menu_bar(self):
         # Settings menu
-        config_openai = QAction('Config OpenAI &model', self)
+        config_openai = QAction('&OpenAI model', self)
         config_openai.triggered.connect(self.config_openai)
-        json_schema_existed = QAction("Config output schema: open &existed", self)
+        json_schema_existed = QAction("Output schema: open &existed", self)
         json_schema_existed.triggered.connect(self.existed_json_schema)
-        json_schema_new = QAction("Config output schema: create &new", self)
+        json_schema_new = QAction("Output schema: &new", self)
         json_schema_new.triggered.connect(self.new_json_schema)
-        max_retries = QAction("Config max &retries", self)
+        max_retries = QAction("&Max &retries", self)
         max_retries.triggered.connect(self.set_max_retries)
 
         # Recognize menu
@@ -116,10 +113,6 @@ class MyWindow(QMainWindow):
 
     @status_check_decorator(action_name='Recognize folder')
     def ocr_batch(self):
-        if self.ocr_engine is None:
-            self.silent_message("warn", "OCR Engine", not_initialized_message)
-            self.delayed_thread_finished()
-            return
         src = QFileDialog.getExistingDirectory(
             caption='Images to recognize', options=QFileDialog.Option.ShowDirsOnly)
         if not (src and os.path.isdir(src)):
@@ -129,15 +122,28 @@ class MyWindow(QMainWindow):
             )
             self.delayed_thread_finished()
             return
+        self.source.setText(src)
         dist = QFileDialog.getExistingDirectory(
             caption='Export to', options=QFileDialog.Option.ShowDirsOnly)
         os.makedirs(dist, exist_ok=True)
-        self.source.setText(src)
-        self.operator = FolderOCR(src, dist, self.ocr_engine)
+        try:
+            with open(self.json_schema_path.text(), "r") as f:
+                schema = json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            self.silent_message(
+                "warn", "OCR Engine", "Output schema is unset or invalid.")
+            self.delayed_thread_finished()
+            return
+        self.operator = BatchOCR(
+            api_key=self.config["openai_api_key"],
+            model_name=self.config["openai_model"],
+            json_schema=schema,
+            input_folder=src,
+            output_folder=dist,
+        )
         self.operator.start()
         self.operator.progress.connect(self.pbar.setValue)
-        self.operator.gui_message.connect(
-            partial(self.silent_message, "warn", "OCR Engine"))
+        self.operator.gui_message.connect(self.ocr_result.append)
         self.operator.done.connect(self.delayed_thread_finished)
 
     @status_check_decorator(action_name='Recognize from clipboard')
@@ -186,24 +192,50 @@ class MyWindow(QMainWindow):
 
     @status_check_decorator(action_name='OCR for single image')
     def ocr_single(self):
-        if self.ocr_engine is None:
-            self.silent_message("warn", "OCR Engine", not_initialized_message)
-            self.delayed_thread_finished()
-            return
         fp, _ = QFileDialog.getOpenFileName(filter='Images (*.png *.jpeg *.jpg)')
         if not (fp and os.path.isfile(fp)):
-            self.silent_message(
-                "warn", "OCR Engine",
-                "The image to recognize does not exist."
+            self.icon_message(
+                "OCR Engine",
+                "The image to recognize does not exist.",
+                QStyle.StandardPixmap.SP_FileIcon,
             )
             self.delayed_thread_finished()
             return
         self.source.setText(fp)
-        self.operator = FileOCR(fp, self.ocr_engine)
+        try:
+            with Image.open(fp) as img:
+                fmt = (img.format or "PNG").upper()
+                mime = f"image/{'jpeg' if fmt == 'JPEG' else fmt.lower()}"
+                buf = io.BytesIO()
+                img.save(buf, format=fmt)
+                b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+                data_url = f"data:{mime};base64,{b64}"
+        except Exception as e:
+            self.silent_message(
+                "warn", "Clipboard",
+                "Fail to convert the image to OpenAI required format. "
+                f"Detail: {e}"
+            )
+            self.delayed_thread_finished()
+            return
+        try:
+            with open(self.json_schema_path.text(), "r") as f:
+                schema = json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            self.silent_message(
+                "warn", "OCR Engine", "Output schema is unset or invalid.")
+            self.delayed_thread_finished()
+            return
+        self.operator = OCR(
+            api_key=self.config["openai_api_key"],
+            model_name=self.config["openai_model"],
+            json_schema=schema,
+            data_url=data_url,
+        )
         self.operator.start()
-        self.operator.progress.connect(self.pbar.setValue)
-        self.operator.gui_message.connect(
+        self.operator.error_message.connect(
             partial(self.silent_message, "warn", "OCR Engine"))
+        self.operator.result.connect(self.ocr_result.setText)
         self.operator.done.connect(self.delayed_thread_finished)
 
     def center(self):

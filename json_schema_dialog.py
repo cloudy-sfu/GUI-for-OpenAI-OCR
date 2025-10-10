@@ -556,7 +556,7 @@ if __name__ == '__main__':
         f'    font-size: 12pt;'
         f'}}'
     )
-    # dialog = SchemaEditor("tests/json_schema/user_profile.json")
-    dialog = SchemaEditor()
+    dialog = SchemaEditor("tests/json_schema/user_profile.json")
+    # dialog = SchemaEditor()
     if dialog.initial_valid:
         action = dialog.exec()
