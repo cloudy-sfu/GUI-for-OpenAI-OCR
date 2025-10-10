@@ -356,6 +356,8 @@ class SchemaEditor(QDialog):
             else:
                 required_set = required_set.difference({new_field_name})
             p2["required"] = list(required_set)
+        # TODO: support more types & format & array length
+        #  https://platform.openai.com/docs/guides/structured-outputs#supported-schemas
         is_valid, message = self._validate_schema()
         if is_valid:
             self.refresh_tree()

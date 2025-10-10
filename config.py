@@ -16,6 +16,7 @@ class Config(dict):
         # schema
         self['openai_api_key'] = ""
         self['openai_model'] = ""
+        self['max_retries'] = 3
 
         # load from file
         self.load()
@@ -28,8 +29,6 @@ class Config(dict):
         try:
             with open(self.config_path, "r") as f:
                 config_ = json.load(f)
-        except FileNotFoundError:
-            return
-        except json.JSONDecodeError:
+        except (FileNotFoundError, json.JSONDecodeError):
             return
         self.update(config_)
