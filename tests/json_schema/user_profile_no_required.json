@@ -5,7 +5,7 @@
     "properties": {
         "userId": {
             "description": "The unique identifier for a user.",
-            "type": "number"
+            "type": "integer"
         },
         "username": {
             "description": "The user's chosen name.",
@@ -24,19 +24,13 @@
                     "description": "Height in meters.",
                     "type": "number"
                 }
-            },
-            "required": [
-                "email"
-            ]
+            }
         },
         "tags": {
             "description": "A list of tags associated with the user. Can contain strings or numbers.",
             "type": "array",
             "items": {
-                "type": [
-                    "string",
-                    "number"
-                ]
+                "type": ["string", "number"]
             }
         },
         "posts": {
@@ -45,24 +39,10 @@
             "items": {
                 "type": "object",
                 "properties": {
-                    "postId": {
-                        "type": "number",
-                        "description": ""
-                    },
-                    "content": {
-                        "type": "string"
-                    }
-                },
-                "required": [
-                    "content",
-                    "postId"
-                ]
+                    "postId": {"type": "integer"},
+                    "content": {"type": "string"}
+                }
             }
         }
-    },
-    "required": [
-        "personalInfo",
-        "userId",
-        "username"
-    ]
+    }
 }
