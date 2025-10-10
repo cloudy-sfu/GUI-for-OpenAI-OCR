@@ -1,17 +1,15 @@
 import os
 import sys
-from datetime import datetime
 from functools import partial
-from operator import attrgetter
 
-import openai
 from PIL import Image
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QAction, QImage
 from PyQt6.QtWidgets import *
 
 from config import Config
-from json_schema_gui import SchemaEditor
+from json_schema_dialog import SchemaEditor
+from open_ai_config_dialog import OpenAIConfigDialog
 
 not_initialized_message = \
 """Fail to connect to large language model. Possible reasons: \n
@@ -24,81 +22,6 @@ else:
 schemas_dir = os.path.join(base_dir, "raw", "json_schema")
 os.makedirs(schemas_dir, exist_ok=True)
 
-
-class OpenAIConfigDialog(QDialog):
-    def __init__(self, parent=None, existed_api_key=""):
-        super().__init__(parent)
-        self.setWindowTitle('Config OpenAI')
-
-        screen_size = self.screen().size()
-        window_width = round(0.25 * screen_size.width())
-        self.setMinimumWidth(window_width)
-
-        # Main layout
-        layout = QVBoxLayout(self)
-        # API Key Input
-        api_key_label = QLabel('OpenAI API Key:', self)
-        layout.addWidget(api_key_label)
-        self.api_key_input = QPlainTextEdit(self)
-        self.api_key_input.setPlainText(existed_api_key)
-        layout.addWidget(self.api_key_input)
-        # Check Button
-        check_button = QPushButton('Validate', self)
-        check_button.clicked.connect(self.check_api_key)
-        check_button_row = QHBoxLayout()
-        check_button_row.addStretch()
-        check_button_row.addWidget(check_button)  # Center
-        check_button_row.addStretch()
-        layout.addLayout(check_button_row)
-        # Model Selection
-        model_label = QLabel('OpenAI model:', self)
-        layout.addWidget(model_label)
-        self.model_combo_box = QComboBox(self)
-        layout.addWidget(self.model_combo_box)
-        # OK and Cancel Buttons
-        self.confirmation = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
-        )
-        self.confirmation.accepted.connect(self.accept)
-        self.confirmation.rejected.connect(self.reject)
-        self.confirmation.setEnabled(False)  # disabled before validated
-        layout.addWidget(self.confirmation)
-        self.setLayout(layout)
-
-        self.dialog_warning = QMessageBox()
-        self.dialog_warning.setIcon(QMessageBox.Icon.Warning)
-        self.dialog_warning.setWindowTitle("Warning")
-        self.dialog_warning.setStandardButtons(QMessageBox.StandardButton.Ok)
-
-    def check_api_key(self):
-        api_key = self.api_key_input.toPlainText().strip()
-        try:
-            client = openai.OpenAI(api_key=api_key)
-            model_list = client.models.list().data
-        except openai.APIConnectionError:
-            self.dialog_warning.setText("Network error: fail to contact OpenAI server.")
-            self.dialog_warning.exec()
-            self.confirmation.setEnabled(False)
-            return
-        except openai.AuthenticationError:
-            self.dialog_warning.setText("Authentication error: invalid API key.")
-            self.dialog_warning.exec()
-            self.confirmation.setEnabled(False)
-            return
-        if not model_list:
-            self.dialog_warning.setText("No available model.")
-            self.dialog_warning.exec()
-            self.confirmation.setEnabled(False)
-            return
-        self.model_combo_box.clear()
-        model_list = sorted(
-            model_list, key=attrgetter('created'), reverse=True)
-        for model in model_list:
-            id_ = model.id
-            created_date = datetime.fromtimestamp(model.created).date()
-            display_name = f"{id_} [{created_date}]"
-            self.model_combo_box.addItem(display_name, userData=id_)
-        self.confirmation.setEnabled(True)
 
 
 
@@ -306,13 +229,14 @@ class MyWindow(QMainWindow):
     @status_check_decorator(action_name='Create new schema')
     def create_json_schema(self):
         dialog = SchemaEditor()
-        if dialog.initial_prevented:
+        if not dialog.initial_valid:
+            self.delayed_thread_finished()
             return
         action = dialog.exec()
         if action != QDialog.DialogCode.Accepted:
             self.delayed_thread_finished()
             return
-
+        self.json_schema_path = dialog.filepath
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
