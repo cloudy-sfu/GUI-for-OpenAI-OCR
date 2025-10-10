@@ -1,6 +1,5 @@
 import os
 import sys
-from functools import partial
 
 from PIL import Image
 from PyQt6.QtCore import Qt
@@ -15,14 +14,6 @@ not_initialized_message = \
 """Fail to connect to large language model. Possible reasons: \n
 (1) OpenAI API key is invalid. \n 
 """
-if hasattr(sys, '_MEIPASS'):  # pyinstaller
-    base_dir = sys._MEIPASS
-else:
-    base_dir = os.path.abspath(".")
-schemas_dir = os.path.join(base_dir, "raw", "json_schema")
-os.makedirs(schemas_dir, exist_ok=True)
-
-
 
 
 def pixmap_to_pillow_image(pixmap):
@@ -53,22 +44,22 @@ class MyWindow(QMainWindow):
 
         self.busy = False
         self.config = Config()
-        self.json_schema_path = ""
 
         self.create_menu_bar()
         self.source_displayed = QLabel(self)
         self.openai_model_name = QLabel(self)
         self.openai_model_name.setText(self.config["openai_model"])
-        self.json_schema_path_displayed = QLabel(self)
+        self.json_schema_path = QLabel(self)
         self.pbar = QProgressBar(self)
         self.message = QTextEdit(self)
 
         main_part = QWidget()
         main_layout = QFormLayout(main_part)
-        main_layout.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
+        main_layout.setAlignment(
+            Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
         main_layout.addRow('Source:', self.source_displayed)
         main_layout.addRow('Model:', self.openai_model_name)
-        main_layout.addRow("Template:", self.json_schema_path_displayed)
+        main_layout.addRow("Schema:", self.json_schema_path)
         main_layout.addRow('Progress:', self.pbar)
         main_layout.addRow('Message:', self.message)
         self.setCentralWidget(main_part)
@@ -77,24 +68,13 @@ class MyWindow(QMainWindow):
         self.status.showMessage('Ready.', 0)
         self.setStatusBar(self.status)
 
-    def create_separator(self):
-        sep = QAction(self)
-        sep.setSeparator(True)
-        return sep
-
     def create_menu_bar(self):
         # Settings menu
-        config_openai = QAction('&Config model', self)
+        config_openai = QAction('Config OpenAI &model', self)
         config_openai.triggered.connect(self.config_openai)
-        json_schema_folder = QAction("Schema: &Open default folder", self)
-        json_schema_folder.triggered.connect(partial(os.startfile, schemas_dir))
-        json_schema_new = QAction("Schema: &Create and select", self)
-        json_schema_new.triggered.connect(self.create_json_schema)
-        json_schema_ = QAction("Schema: &Edit and select", self)
-        json_schema_load = QAction("Schema: &Select", self)
-        close = QAction('&Exit', self)
-        close.triggered.connect(self.close)
-        close.setShortcut('Ctrl+W')
+        json_schema_ = QAction("Config output &schema", self)
+        json_schema_.triggered.connect(self.select_json_schema)
+
         # Recognize menu
         reco_folder = QAction('From &folder', self)
         reco_folder.triggered.connect(self.ocr_batch)
@@ -104,11 +84,9 @@ class MyWindow(QMainWindow):
         reco_clipboard.triggered.connect(self.ocr_clipboard)
         reco_clipboard.setShortcut('Ctrl+Shift+V')
         # First-level buttons
-        settings = QMenu('&Settings', self)
+        settings = QMenu('&Config', self)
         settings.addActions([
-            config_openai, self.create_separator(),
-            json_schema_folder, json_schema_, json_schema_new, json_schema_load,
-            self.create_separator(), close
+            config_openai, json_schema_,
         ])
         recognize = QMenu('&Recognize', self)
         recognize.addActions([reco_folder, reco_file, reco_clipboard])
@@ -136,10 +114,6 @@ class MyWindow(QMainWindow):
         self.pbar.setValue(100)
         self.status.showMessage('Ready.', 0)
         self.busy = False
-
-    @status_check_decorator(action_name="Set JSON schema")
-    def set_json_schema(self):
-        pass
 
     @status_check_decorator(action_name='Recognize folder')
     def ocr_batch(self):
@@ -202,10 +176,10 @@ class MyWindow(QMainWindow):
         self.operator.done.connect(self.delayed_thread_finished)
 
     def center(self):
-        fg = self.frameGeometry()
-        cp = self.screen().availableGeometry().center()
-        fg.moveCenter(cp)
-        self.move(fg.topLeft())
+        frame = self.frameGeometry()
+        center = self.screen().availableGeometry().center()
+        frame.moveCenter(center)
+        self.move(frame.topLeft())
 
 
     @status_check_decorator(action_name='Config OpenAI model')
@@ -226,9 +200,27 @@ class MyWindow(QMainWindow):
         self.delayed_thread_finished()
         return
 
-    @status_check_decorator(action_name='Create new schema')
-    def create_json_schema(self):
-        dialog = SchemaEditor()
+    @status_check_decorator(action_name='Config output schema')
+    def select_json_schema(self):
+        self.message.clear()
+        create_, ok = QInputDialog.getItem(
+            self,
+            "Config output schema",
+            "Output schema from:",
+            [
+                "Create a new schema.",
+                "Open an existed schema."
+            ],
+            editable=False,
+        )
+        if not ok:
+            self.delayed_thread_finished()
+            return
+        if create_ == "Create a new schema.":
+            dialog = SchemaEditor()
+        else:
+            fp, _ = QFileDialog.getOpenFileName(filter='Output schema (*.json)')
+            dialog = SchemaEditor(fp)
         if not dialog.initial_valid:
             self.delayed_thread_finished()
             return
@@ -236,7 +228,8 @@ class MyWindow(QMainWindow):
         if action != QDialog.DialogCode.Accepted:
             self.delayed_thread_finished()
             return
-        self.json_schema_path = dialog.filepath
+        self.json_schema_path.setText(dialog.filepath)
+        self.delayed_thread_finished()
 
 
 if __name__ == '__main__':

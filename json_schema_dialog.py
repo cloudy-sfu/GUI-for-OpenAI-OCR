@@ -1,4 +1,5 @@
 import json
+from operator import attrgetter
 
 import jsonschema
 from PyQt6.QtCore import Qt
@@ -9,7 +10,7 @@ from PyQt6.QtWidgets import *
 class SchemaEditor(QDialog):
     def __init__(self, path=None, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("JSON Schema Editor")
+        self.setWindowTitle("Schema Editor")
         screen_size = self.screen().size()
         window_width = round(0.75 * screen_size.width())
         window_height = round(window_width / 1.6)
@@ -92,6 +93,8 @@ class SchemaEditor(QDialog):
         # Menu bar -> Validate
         v_schema = QAction("Validate &schema", self)
         v_schema.triggered.connect(self.validate_schema)
+        v_ins = QAction("Validate &data", self)
+        v_ins.triggered.connect(self.validate_data)
 
         # Menu bar -> First-level buttons
         edit_ = QMenu('&Edit', self)
@@ -103,6 +106,7 @@ class SchemaEditor(QDialog):
         validate = QMenu("&Validate", self)
         validate.addActions([
             v_schema,
+            v_ins
         ])
 
         # Menu bar
@@ -135,10 +139,20 @@ class SchemaEditor(QDialog):
             "properties": {},
             "required": []
         }
-        self.filepath = path
         if path is None:
             self.schema = default_schema
-            self.initial_valid = True
+            fp, _ = QFileDialog.getSaveFileName(filter='JSON (*.json)')
+            if fp:
+                self.filepath = fp
+                self.initial_valid = True
+            else:
+                self.icon_message(
+                    "Fail",
+                    "Fail to confirm the file path to save.",
+                    QStyle.StandardPixmap.SP_DirOpenIcon,
+                )
+                self.initial_valid = False
+                return
         else:
             try:
                 with open(path, "r", encoding="utf-8") as f:
@@ -148,7 +162,7 @@ class SchemaEditor(QDialog):
                 self.schema = default_schema
                 self.initial_valid = False
                 self.icon_message(
-                    "Validator",
+                    "File",
                     "Fail to open the schema. The file doesn't exist or isn't a "
                     "schema.",
                     QStyle.StandardPixmap.SP_FileIcon,
@@ -158,6 +172,7 @@ class SchemaEditor(QDialog):
             if not self.initial_valid:
                 self.silent_message("warn", "Validator", message)
                 return
+            self.filepath = path
         self.refresh_tree()
 
     def help(self):
@@ -269,7 +284,7 @@ class SchemaEditor(QDialog):
         p2 = path_to_dict_pointer(self.schema, self.path[:-2])
         p1 = p2[self.path[-2]]
         self_ = p1[self.path[-1]]
-        if is_array(p1.get("type")):  # Element of array
+        if is_type(p1.get("type"), "array"):  # Element of array
             self.required_.setEnabled(False)
             self.field_name.setEnabled(False)
             self.type_list.setEnabled(True)
@@ -324,7 +339,7 @@ class SchemaEditor(QDialog):
                 self_["type"] = type_list[0]
             case 2:
                 self_["type"] = type_list
-        if not is_array(p1.get("type")):  # Not element of array
+        if not is_type(p1.get("type"), "array"):  # Not element of array
             self_["description"] = description
             new_field_name = field_name
             old_field_name = self.path[-1]
@@ -380,9 +395,9 @@ class SchemaEditor(QDialog):
         path = node_in_tree_to_path(node)
         p2 = path_to_dict_pointer(self.schema, path)
         p2_type = p2.get("type")
-        if is_array(p2_type):
+        if is_type(p2_type, "array"):
             p2.setdefault("items", {})
-        elif is_object(p2_type):
+        elif is_type(p2_type, "object"):
             p2.setdefault("properties", {})
             p1 = p2["properties"]
             name, ok = QInputDialog.getText(self, "Add child", "Field name:")
@@ -420,6 +435,39 @@ class SchemaEditor(QDialog):
         with open(self.filepath, "w") as f:
             json.dump(self.schema, f, indent=4, ensure_ascii=False)
         self.accept()
+
+    def validate_data(self):
+        validator = jsonschema.Draft7Validator(self.schema)
+        fp, _ = QFileDialog.getOpenFileName(filter="JSON (*.json)")
+        if not fp:
+            return
+        try:
+            with open(fp) as f:
+                invalid_data = json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            self.icon_message(
+                "File",
+                "Fail to open the data file. The file doesn't exist or has "
+                "incompatible format.",
+                QStyle.StandardPixmap.SP_FileIcon,
+            )
+            return
+        errors = sorted(validator.iter_errors(invalid_data), key=attrgetter('path'))
+        if errors:
+            error_message = "Data doesn't fit this schema:\n"
+            for e in errors:
+                path_str = "$"
+                for p in e.path:
+                    if isinstance(p, str):
+                        p_ = "\"" + p + "\""
+                    else:
+                        p_ = str(p)
+                    path_str += "[" + p_ + "]"
+                error_message += f"At {path_str}, {e.message}.\n"
+            self.silent_message("warn", "Validator", error_message)
+        else:
+            self.silent_message(
+                "info", "Validator", "Data fits this schema.")
 
 
 def path_to_dict_pointer(dict_, path):
@@ -472,7 +520,8 @@ def json_to_tree(parent, dict_, required):
                 property_.get("properties", {}),
                 property_.get("required", []),
             )
-        elif ("items" in property_.keys()) and is_array(property_.get("type")):
+        elif (("items" in property_.keys()) and
+              is_type(property_.get("type"), "array")):
             item = QTreeWidgetItem([
                 "", "E",
                 display_type(property_["items"].get("type")), ""
@@ -485,15 +534,7 @@ def json_to_tree(parent, dict_, required):
             )
 
 
-def is_array(type_) -> bool:
-    return is_any_type(type_, "array")
-
-
-def is_object(type_) -> bool:
-    return is_any_type(type_, "object")
-
-
-def is_any_type(actual_type, expected_type) -> bool:
+def is_type(actual_type, expected_type) -> bool:
     if actual_type is None:
         return False
     elif isinstance(actual_type, str):
@@ -513,7 +554,7 @@ if __name__ == '__main__':
         f'    font-size: 12pt;'
         f'}}'
     )
-    dialog = SchemaEditor("tests/json_schema/user_profile.json")
-    action = dialog.exec()
-    if action != QDialog.DialogCode.Accepted:
-        pass
+    # dialog = SchemaEditor("tests/json_schema/user_profile.json")
+    dialog = SchemaEditor()
+    if dialog.initial_valid:
+        action = dialog.exec()

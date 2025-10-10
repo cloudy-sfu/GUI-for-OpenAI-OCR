@@ -1,5 +1,5 @@
 # GUI for OpenAI OCR
-The GUI for OCR via OpenAI large language models
+The graphic user interface for optical character recognition by OpenAI large language models
 
 ![](https://shields.io/badge/dependencies-Python_3.13-blue)
 ![](https://shields.io/badge/dependencies-openai.com-blue)
