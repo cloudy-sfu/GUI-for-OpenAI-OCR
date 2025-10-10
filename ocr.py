@@ -19,13 +19,12 @@ class OCR(QThread):
         self.model_name = model_name
         self.data_url = data_url
         self.json_schema = json_schema
-        # modify schema based on OpenAI special requirement
-        self.json_schema["additionalProperties"] = False
 
     # noinspection PyTypeChecker
     def run(self) -> None:
         prompt = ("Perform OCR on this image and return data that strictly conforms to "
                   "the provided JSON schema.")
+        print(self.json_schema.keys())
         try:
             client = OpenAI(api_key=self.api_key)
             response = client.chat.completions.create(
@@ -36,7 +35,7 @@ class OCR(QThread):
                 ]}],
                 response_format={"type": "json_schema", "json_schema": {
                     "name": "schema_1",
-                    "strict": True,
+                    "strict": False,
                     "schema": self.json_schema,
                 }},
                 reasoning_effort="minimal",
@@ -62,8 +61,6 @@ class BatchOCR(QThread):
         self.input_folder = input_folder
         self.output_folder = output_folder
         self.json_schema = json_schema
-        # modify schema based on OpenAI special requirement
-        self.json_schema["additionalProperties"] = False
 
     # noinspection PyTypeChecker
     def run(self) -> None:
@@ -107,7 +104,6 @@ class BatchOCR(QThread):
                     ]}],
                     response_format={"type": "json_schema", "json_schema": {
                         "name": "schema_1",
-                        "strict": True,
                         "schema": self.json_schema,
                     }},
                     reasoning_effort="minimal",

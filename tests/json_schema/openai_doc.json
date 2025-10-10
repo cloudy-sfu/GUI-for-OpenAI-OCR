@@ -1,0 +1,40 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+        "arguments": {
+            "type": "array",
+            "description": "A list where each element is an argument for the function in the documentation.",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "arg_type": {
+                        "type": "string",
+                        "description": "Data type of this argument."
+                    },
+                    "arg_name": {
+                        "type": "string",
+                        "description": "Name of this argument."
+                    },
+                    "arg_opt": {
+                        "type": "boolean",
+                        "description": "Whether this argument is optional."
+                    },
+                    "arg_desc": {
+                        "type": "string",
+                        "description": "Description of this argument."
+                    }
+                },
+                "required": [
+                    "arg_name",
+                    "arg_desc",
+                    "arg_type",
+                    "arg_opt"
+                ]
+            }
+        }
+    },
+    "required": [
+        "arguments"
+    ]
+}

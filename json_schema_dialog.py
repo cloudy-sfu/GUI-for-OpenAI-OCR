@@ -179,10 +179,11 @@ class SchemaEditor(QDialog):
         self.icon_message(
             "Help",
             "[Shortcuts]\n"
-            "Expand: Ctrl Shift = (it expands the selected node; to expand all, select "
-            "the root node)\n"
+            "Expand: Ctrl Shift =\n"
+            "Expand all: select the root node and expand\n"
             "Collapse: Ctrl -\n"
-            "Update: Ctrl S (it saves the currently selected node)\n"
+            "Collapse all: select the root node and collapse\n"
+            "Update: Ctrl S\n"
             "\n"
             "[Symbols]\n"
             "Required field: *\n"
@@ -546,17 +547,3 @@ def is_type(actual_type, expected_type) -> bool:
     else:
         raise ValueError(
             f"JSON schema is invalid: field type \"{actual_type}\" is invalid.")
-
-
-if __name__ == '__main__':
-    app = QApplication([])
-    app.setStyleSheet(
-        f'QWidget {{'
-        f'    font-family: "Microsoft YaHei", Calibri, Ubuntu; '
-        f'    font-size: 12pt;'
-        f'}}'
-    )
-    dialog = SchemaEditor("tests/json_schema/user_profile.json")
-    # dialog = SchemaEditor()
-    if dialog.initial_valid:
-        action = dialog.exec()
