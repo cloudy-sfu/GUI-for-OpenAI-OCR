@@ -25,12 +25,7 @@
                         "description": "Description of this argument."
                     }
                 },
-                "required": [
-                    "arg_name",
-                    "arg_desc",
-                    "arg_type",
-                    "arg_opt"
-                ]
+                "required": []
             }
         }
     },

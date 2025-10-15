@@ -19,12 +19,12 @@ class OCR(QThread):
         self.model_name = model_name
         self.data_url = data_url
         self.json_schema = json_schema
+        make_all_fields_required(self.json_schema)
 
     # noinspection PyTypeChecker
     def run(self) -> None:
         prompt = ("Perform OCR on this image and return data that strictly conforms to "
                   "the provided JSON schema.")
-        print(self.json_schema.keys())
         try:
             client = OpenAI(api_key=self.api_key)
             response = client.chat.completions.create(
@@ -35,7 +35,7 @@ class OCR(QThread):
                 ]}],
                 response_format={"type": "json_schema", "json_schema": {
                     "name": "schema_1",
-                    "strict": False,
+                    "strict": True,
                     "schema": self.json_schema,
                 }},
                 reasoning_effort="minimal",
@@ -61,6 +61,7 @@ class BatchOCR(QThread):
         self.input_folder = input_folder
         self.output_folder = output_folder
         self.json_schema = json_schema
+        make_all_fields_required(self.json_schema)
 
     # noinspection PyTypeChecker
     def run(self) -> None:
@@ -118,3 +119,29 @@ class BatchOCR(QThread):
             self.progress.emit(progress_percentage)
         os.startfile(self.output_folder)
         self.done.emit(True)
+
+
+def make_all_fields_required(schema):
+    """
+    Recursively traverses a JSON schema and makes all fields required.
+    Modifies the schema in-place.
+    """
+    if isinstance(schema, dict):
+        # If 'properties' exists, make all of them required
+        if 'properties' in schema and isinstance(schema['properties'], dict):
+            already_required = set(schema.get('required', []))
+            schema['required'] = list(schema['properties'].keys())
+            for field_name, child in schema['properties'].items():
+                if (field_name not in already_required) and ('type' in child.keys()):
+                    if isinstance(child['type'], str):
+                        child['type'] = [child['type'], "null"]
+                    elif "null" not in child['type']:  # child['type'] is list
+                        child['type'].append("null")
+            schema['additionalProperties'] = False
+        # Recursively process all values in the dictionary
+        for key, value in schema.items():
+            make_all_fields_required(value)
+    elif isinstance(schema, list):
+        # If it's a list, process each item in the list
+        for item in schema:
+            make_all_fields_required(item)
