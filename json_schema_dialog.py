@@ -254,11 +254,13 @@ class SchemaEditor(QDialog):
             self.schema.get("description", "")
         ])
         self.tree.addTopLevelItem(root_item)
-        json_to_tree(
-            root_item,
-            self.schema.get("properties", {}),
-            self.schema.get("required", []),
-        )
+        for field, property_ in self.schema.get("properties", {}).items():
+            json_to_tree(
+                root_item,
+                field,
+                property_,
+                field in self.schema.get("required", []),
+            )
         self.tree.expandAll()
         self.tree.resizeColumnToContents(0)
         self.tree.resizeColumnToContents(1)
@@ -398,9 +400,26 @@ class SchemaEditor(QDialog):
         path = node_in_tree_to_path(node)
         p2 = path_to_dict_pointer(self.schema, path)
         p2_type = p2.get("type")
-        if is_type(p2_type, "array"):
+        is_array = is_type(p2_type, "array")
+        is_object = is_type(p2_type, "object")
+
+        # Distinguish ambiguous type
+        if is_array and is_object:
+            role, ok = QInputDialog.getItem(
+                self, "Add child", "Add array element or object property?",
+                ["Array element", "Object property"],
+                editable=False
+            )
+            if not ok:
+                return
+            if role == "Array element":
+                is_object = False
+            else:  # role == "Object property"
+                is_array = False
+
+        if is_array:
             p2.setdefault("items", {})
-        elif is_type(p2_type, "object"):
+        elif is_object:
             p2.setdefault("properties", {})
             p1 = p2["properties"]
             name, ok = QInputDialog.getText(self, "Add child", "Field name:")
@@ -420,8 +439,8 @@ class SchemaEditor(QDialog):
         else:
             self.silent_message(
                 "warn", "Validator",
-                "Cannot add child item to an item whose type is not \"array or "
-                "object\"."
+                "Cannot add child item to an item whose type is not \"array\" or "
+                "\"object\"."
             )
             return
         is_valid, message = self._validate_schema()
@@ -507,34 +526,37 @@ def display_type(type_) -> str:
         raise ValueError(f"JSON schema is invalid: field type \"{type_}\" is invalid.")
 
 
-def json_to_tree(parent, dict_, required):
+def json_to_tree(parent, field_name, property_, required, is_array_item=False):
     assert isinstance(parent, QTreeWidgetItem), "Parent node is not a tree item."
-    for field, property_ in dict_.items():
+    if is_array_item:
         self_ = QTreeWidgetItem([
-            field,
-            "*" * (field in required),
+            "", "E",
+            display_type(property_.get("type")), ""
+        ])
+    else:
+        self_ = QTreeWidgetItem([
+            field_name,
+            "*" * required,
             display_type(property_.get("type")),
             property_.get("description", ""),
         ])
-        parent.addChild(self_)
-        if "properties" in property_.keys():
+    parent.addChild(self_)
+    if "properties" in property_.keys():
+        for sub_field, sub_property in property_.get("properties", {}).items():
             json_to_tree(
                 self_,
-                property_.get("properties", {}),
-                property_.get("required", []),
+                sub_field,
+                sub_property,
+                sub_field in property_.get("required", []),
             )
-        elif (("items" in property_.keys()) and
-              is_type(property_.get("type"), "array")):
-            item = QTreeWidgetItem([
-                "", "E",
-                display_type(property_["items"].get("type")), ""
-            ])
-            self_.addChild(item)
-            json_to_tree(
-                item,
-                property_["items"].get("properties", {}),
-                property_["items"].get("required", []),
-            )
+    elif "items" in property_.keys():
+        json_to_tree(
+            self_,
+            None,
+            property_["items"],
+            None,
+            is_array_item=True
+        )
 
 
 def is_type(actual_type, expected_type) -> bool:
