@@ -1,10 +1,28 @@
 import json
+from functools import partial
 from operator import attrgetter
 
 import jsonschema
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QAction, QFontMetrics
+from PyQt6.QtGui import QAction, QFontMetrics, QDoubleValidator, QIntValidator
 from PyQt6.QtWidgets import *
+
+from table_dialog import TableDialog
+
+
+def help_1():
+    dialog = TableDialog(
+        data=[
+            ["Expand", "Ctrl Shift ="],
+            ["Expand all", "Expand the root node"],
+            ["Collapse", "Ctrl -"],
+            ["Collapse all", "Collapse the root node"],
+            ["Update", "Ctrl S"]
+        ],
+        columns=["Action", "Shortcut or method"],
+    )
+    dialog.setWindowTitle("Shortcuts")
+    dialog.exec()
 
 
 class SchemaEditor(QDialog):
@@ -29,14 +47,27 @@ class SchemaEditor(QDialog):
         self.tree.itemSelectionChanged.connect(self.view_node)
         self.path = []  # identical location to selected node
         self.tree.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.tree.setWhatsThis("[Symbols]\n"
+                               "*\tRequired field\n"
+                               "E\tElement of array\n")
 
         # Right column
         right_col_1 = QWidget()
         right_col = QVBoxLayout()
         right_col_1.setLayout(right_col)
 
+        # Right column -> Submit
+        update_node_layout = QHBoxLayout()
+        self.update_node_button = QPushButton()
+        self.update_node_button.setText("Update")
+        self.update_node_button.setShortcut("Ctrl+S")
+        self.update_node_button.clicked.connect(self.update_node)
+        update_node_layout.addStretch()
+        update_node_layout.addWidget(self.update_node_button)
+        right_col.addLayout(update_node_layout)
+
         # Right column -> Field name
-        right_col.addWidget(QLabel("Field name:"))
+        right_col.addWidget(QLabel("*Field name:"))
         self.field_name = QLineEdit()
         right_col.addWidget(self.field_name)
 
@@ -46,7 +77,7 @@ class SchemaEditor(QDialog):
         right_col.addWidget(self.required_)
 
         # Right column -> Type
-        right_col.addWidget(QLabel("Type:"))
+        right_col.addWidget(QLabel("*Type:"))
         self.type_list = QListWidget()
         self.type_list.setSelectionMode(QAbstractItemView.SelectionMode.MultiSelection)
         self.type_list.addItems([
@@ -66,22 +97,91 @@ class SchemaEditor(QDialog):
         # Right column -> Description
         right_col.addWidget(QLabel("Description:"))
         self.description = QTextEdit()
+        n_lines = 4
+        frame_width = self.description.frameWidth()
+        self.description.setFixedHeight(int(
+            (line_height * n_lines + frame_width * 2) * zoom_pct
+        ))
         right_col.addWidget(self.description)
 
-        # Right column -> Submit
-        update_node_layout = QHBoxLayout()
-        self.update_node_button = QPushButton()
-        self.update_node_button.setText("Update")
-        self.update_node_button.setShortcut("Ctrl+S")
-        self.update_node_button.clicked.connect(self.update_node)
-        update_node_layout.addStretch()
-        update_node_layout.addWidget(self.update_node_button)
-        update_node_layout.addStretch()
-        right_col.addLayout(update_node_layout)
+        spec_type_doc = QLabel('<a href="https://platform.openai.com/docs/guides/'
+                               'structured-outputs?type-restrictions=string-restrictions'
+                               '#supported-schemas">Explanation of type-specific '
+                               'constraints</a>')
+        spec_type_doc.setOpenExternalLinks(True)
+        right_col.addWidget(spec_type_doc)
+
+        # Right column -> String
+        self.string_group = QGroupBox()
+        self.string_group.setTitle("String")
+        string_group_layout = QVBoxLayout()
+        self.string_group.setLayout(string_group_layout)
+        string_group_layout.addWidget(QLabel("Regex:"))
+        self.string_regex = QLineEdit()
+        string_group_layout.addWidget(self.string_regex)
+        string_group_layout.addWidget(QLabel("Pre-defined format:"))
+        string_type_line = QHBoxLayout()
+        self.string_type = QComboBox()
+        self.string_type.addItems([
+            "date", "time", "date-time", "duration", "email", "hostname", "ipv4", "ipv6",
+            "uuid",
+        ])
+        self.string_type.setCurrentIndex(-1)
+        self.string_type.setPlaceholderText("-- No special format --")
+        self.string_type.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        string_type_line.addWidget(self.string_type)
+        clear_string_type = QPushButton()
+        clear_string_type.setText("Clear")
+        string_type_line.addWidget(clear_string_type)
+        clear_string_type.clicked.connect(
+            partial(self.string_type.setCurrentIndex, -1))
+        string_group_layout.addLayout(string_type_line)
+        right_col.addWidget(self.string_group)
+
+        # Right column -> Number
+        self.number_group = QGroupBox()
+        self.number_group.setTitle("Number")
+        number_group_layout = QVBoxLayout()
+        self.number_group.setLayout(number_group_layout)
+        number_group_layout.addWidget(QLabel("Min:"))
+        self.num_min = QLineEdit()
+        self.num_min.setValidator(QDoubleValidator())
+        number_group_layout.addWidget(self.num_min)
+        self.num_exclusive_min = QCheckBox()
+        self.num_exclusive_min.setText("Exclusive")
+        number_group_layout.addWidget(self.num_exclusive_min)
+        number_group_layout.addWidget(QLabel("Max:"))
+        self.num_max = QLineEdit()
+        self.num_max.setValidator(QDoubleValidator())
+        number_group_layout.addWidget(self.num_max)
+        self.num_exclusive_max = QCheckBox()
+        self.num_exclusive_max.setText("Exclusive")
+        number_group_layout.addWidget(self.num_exclusive_max)
+        number_group_layout.addWidget(QLabel("Multiple of:"))
+        self.num_multiple_of = QLineEdit()
+        self.num_multiple_of.setValidator(QDoubleValidator())
+        number_group_layout.addWidget(self.num_multiple_of)
+        right_col.addWidget(self.number_group)
+
+        # Right column -> Array
+        self.array_group = QGroupBox()
+        self.array_group.setTitle("Array")
+        array_group_layout = QVBoxLayout()
+        self.array_group.setLayout(array_group_layout)
+        array_group_layout.addWidget(QLabel("Min length:"))
+        self.array_min_len = QLineEdit()
+        self.array_min_len.setValidator(QIntValidator(bottom=0))
+        array_group_layout.addWidget(self.array_min_len)
+        array_group_layout.addWidget(QLabel("Max length:"))
+        self.array_max_len = QLineEdit()
+        self.array_max_len.setValidator(QIntValidator(bottom=0))
+        array_group_layout.addWidget(self.array_max_len)
+        right_col.addWidget(self.array_group)
 
         # Menu bar -> Edit
-        help_ = QAction("&Help", self)
-        help_.triggered.connect(self.help)
+        help_ = QAction("&Shortcuts", self)
+        help_.triggered.connect(help_1)
         help_.setShortcut("F1")
         del_node = QAction("&Delete", self)
         del_node.triggered.connect(self.del_node)
@@ -122,9 +222,14 @@ class SchemaEditor(QDialog):
         dialog_buttons.rejected.connect(self.reject)
 
         # Collect to main window
-        layout.addWidget(self.tree)
         right_col.addStretch()
-        layout.addWidget(right_col_1)
+        right_scroll = QScrollArea()
+        right_scroll.setWidget(right_col_1)
+        right_scroll.setWidgetResizable(True)
+        right_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        right_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        layout.addWidget(self.tree)
+        layout.addWidget(right_scroll)
         # left:right = 3:2, after adding all widgets
         layout.setStretchFactor(0, 3)
         layout.setStretchFactor(1, 2)
@@ -174,21 +279,6 @@ class SchemaEditor(QDialog):
                 return
             self.filepath = path
         self.refresh_tree()
-
-    def help(self):
-        self.icon_message(
-            "Help",
-            "[Shortcuts]\n"
-            "Expand: Ctrl Shift =\n"
-            "Expand all: select the root node and expand\n"
-            "Collapse: Ctrl -\n"
-            "Collapse all: select the root node and collapse\n"
-            "Update: Ctrl S\n"
-            "\n"
-            "[Symbols]\n"
-            "Required field: *\n"
-            "Element of array: E\n"
-        )
 
     def _validate_schema(self):
         try:
@@ -276,12 +366,24 @@ class SchemaEditor(QDialog):
             self.required_.setEnabled(False)
             self.field_name.setEnabled(False)
             self.type_list.setEnabled(False)
-            self.description.setEnabled(True)
 
             self.required_.setChecked(True)
             self.field_name.setText("")
             self.type_list.clearSelection()
             self.description.setText(self.schema.get("description", ""))
+
+            self.string_group.setEnabled(False)
+            self.string_regex.clear()
+            self.string_type.setCurrentIndex(-1)
+            self.number_group.setEnabled(False)
+            self.num_min.clear()
+            self.num_max.clear()
+            self.num_exclusive_min.setChecked(False)
+            self.num_exclusive_max.setChecked(False)
+            self.num_multiple_of.clear()
+            self.array_group.setEnabled(False)
+            self.array_min_len.clear()
+            self.array_max_len.clear()
             return
 
         p2 = path_to_dict_pointer(self.schema, self.path[:-2])
@@ -291,7 +393,6 @@ class SchemaEditor(QDialog):
             self.required_.setEnabled(False)
             self.field_name.setEnabled(False)
             self.type_list.setEnabled(True)
-            self.description.setEnabled(False)
 
             self.required_.setChecked(False)
             self.field_name.setText("")
@@ -300,23 +401,40 @@ class SchemaEditor(QDialog):
             self.required_.setEnabled(True)
             self.field_name.setEnabled(True)
             self.type_list.setEnabled(True)
-            self.description.setEnabled(True)
 
             self.required_.setChecked(self.path[-1] in p2.get("required", []))
             self.field_name.setText(self.path[-1])
-            self.description.setText(self_.get("description", ""))
 
-        type_ = self_.get("type")
-        if type_ is None:
+        self.description.setText(self_.get("description", ""))
+        self_type = self_.get("type")
+        if self_type is None:
             self.type_list.clearSelection()
-        elif isinstance(type_, str):
-            for i in range(self.type_list.count()):
-                item = self.type_list.item(i)
-                item.setSelected(item.text() == type_)
         else:
             for i in range(self.type_list.count()):
                 item = self.type_list.item(i)
-                item.setSelected(item.text() in type_)
+                item.setSelected(is_type(self_type, item.text()))
+
+        self.string_group.setEnabled(is_type(self_type, "string"))
+        self.string_regex.setText(self_.get("pattern", ""))
+        string_type = self_.get("format")
+        if string_type is None:
+            self.string_type.setCurrentIndex(-1)
+        else:
+            self.string_type.setCurrentText(string_type)
+
+        self.number_group.setEnabled(is_type(self_type, "number"))
+        self.num_min.setText(str(
+            self_.get("minimum") or self_.get("exclusiveMinimum", "")))
+        self.num_max.setText(str(
+            self_.get("maximum") or self_.get("exclusiveMaximum", "")))
+        self.num_exclusive_min.setChecked(self_.get("exclusiveMinimum") is not None)
+        self.num_exclusive_max.setChecked(self_.get("exclusiveMaximum") is not None)
+        self.num_multiple_of.setText(str(self_.get("multipleOf", "")))
+
+        self.array_group.setEnabled(is_type(self_type, "array"))
+        self.array_min_len.setText(str(self_.get("minItems", "")))
+        self.array_max_len.setText(str(self_.get("maxItems", "")))
+
 
     def update_node(self):
         field_name = self.field_name.text()
@@ -342,8 +460,8 @@ class SchemaEditor(QDialog):
                 self_["type"] = type_list[0]
             case 2:
                 self_["type"] = type_list
+        self_["description"] = description
         if not is_type(p1.get("type"), "array"):  # Not element of array
-            self_["description"] = description
             new_field_name = field_name
             old_field_name = self.path[-1]
             required_set = set(p2.get("required", []))
@@ -359,8 +477,61 @@ class SchemaEditor(QDialog):
             else:
                 required_set = required_set.difference({new_field_name})
             p2["required"] = list(required_set)
-        # TODO: support more types & format & array length
-        #  https://platform.openai.com/docs/guides/structured-outputs#supported-schemas
+
+        # type-specific constraints
+        is_string = is_type(self_["type"], "string")
+        pattern = self.string_regex.text()
+        if is_string and pattern:
+            self_["pattern"] = pattern
+        else:
+            self_.pop("pattern", None)
+        string_type = self.string_type.currentText()
+        if is_string and string_type:
+            self_["format"] = string_type
+        else:
+            self_.pop("format", None)
+
+        is_number = is_type(self_["type"], "number")
+        num_min = self.num_min.text()
+        if is_number and num_min:
+            if self.num_exclusive_min.isChecked():
+                self_.pop("minimum", None)
+                self_["exclusiveMinimum"] = float(num_min)
+            else:
+                self_["minimum"] = float(num_min)
+                self_.pop("exclusiveMinimum", None)
+        else:
+            self_.pop("minimum", None)
+            self_.pop("exclusiveMinimum", None)
+        num_max = self.num_max.text()
+        if is_number and num_max:
+            if self.num_exclusive_max.isChecked():
+                self_.pop("maximum", None)
+                self_["exclusiveMaximum"] = float(num_max)
+            else:
+                self_["maximum"] = float(num_max)
+                self_.pop("exclusiveMaximum", None)
+        else:
+            self_.pop("maximum", None)
+            self_.pop("exclusiveMaximum", None)
+        multiple_of = self.num_multiple_of.text()
+        if is_number and multiple_of:
+            self_["multipleOf"] = float(multiple_of)
+        else:
+            self_.pop("multipleOf", None)
+
+        is_array = is_type(self_["type"], "array")
+        min_items = self.array_min_len.text()
+        if is_array and min_items:
+            self_["minItems"] = int(min_items)
+        else:
+            self_.pop("minItems", None)
+        max_items = self.array_max_len.text()
+        if is_array and max_items:
+            self_["maxItems"] = int(max_items)
+        else:
+            self_.pop("maxItems", None)
+
         is_valid, message = self._validate_schema()
         if is_valid:
             self.refresh_tree()
@@ -529,17 +700,17 @@ def display_type(type_) -> str:
 def json_to_tree(parent, field_name, property_, required, is_array_item=False):
     assert isinstance(parent, QTreeWidgetItem), "Parent node is not a tree item."
     if is_array_item:
-        self_ = QTreeWidgetItem([
-            "", "E",
-            display_type(property_.get("type")), ""
-        ])
+        col_0 = ""
+        col_1 = "E"
     else:
-        self_ = QTreeWidgetItem([
-            field_name,
-            "*" * required,
-            display_type(property_.get("type")),
-            property_.get("description", ""),
-        ])
+        col_0 = field_name
+        col_1 = "*" * required
+    self_ = QTreeWidgetItem([
+        col_0,
+        col_1,
+        display_type(property_.get("type")),
+        property_.get("description", ""),
+    ])
     parent.addChild(self_)
     if "properties" in property_.keys():
         for sub_field, sub_property in property_.get("properties", {}).items():

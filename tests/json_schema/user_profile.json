@@ -56,7 +56,8 @@
                 "required": [
                     "content",
                     "postId"
-                ]
+                ],
+                "description": "A post made by the user."
             }
         }
     },
