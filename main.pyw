@@ -6,19 +6,24 @@ import sys
 from functools import partial
 
 from PIL import Image
-from PyQt6.QtCore import Qt, QBuffer, QByteArray, QIODevice
-from PyQt6.QtGui import QAction
+from PyQt6.QtCore import Qt, QBuffer, QByteArray, QIODevice, QUrl
+from PyQt6.QtGui import QAction, QDesktopServices
 from PyQt6.QtWidgets import *
 
 from config import Config
-from json_schema_dialog import SchemaEditor
 from ocr import OCR, BatchOCR
 from open_ai_config_dialog import OpenAIConfigDialog
 
 
+def download_json_schema_editor():
+    QDesktopServices.openUrl(QUrl(
+        "https://github.com/cloudy-sfu/JSON-schema-editor"
+    ))
+
+
 class MyWindow(QMainWindow):
     def __init__(self):
-        super(MyWindow, self).__init__(flags=Qt.WindowType.Window)
+        super(MyWindow, self).__init__()
 
         # Logical, e.g. 2560*1440 150% -> 1707*960
         screen_size = self.screen().size()
@@ -33,6 +38,7 @@ class MyWindow(QMainWindow):
         self.config = Config()
         # Hold reference to prevent OCR engine as local variable being destroyed
         self.operator = None
+        self.json_schema = None
 
         self.create_menu_bar()
         self.source = QLabel(self)
@@ -42,13 +48,22 @@ class MyWindow(QMainWindow):
         self.pbar = QProgressBar(self)
         self.ocr_result = QTextEdit(self)
 
+        json_schema_row = QHBoxLayout()
+        self.json_schema_path.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        json_schema_row.addWidget(self.json_schema_path)
+        clear_schema = QPushButton()
+        clear_schema.setText("Clear")
+        clear_schema.clicked.connect(self.clear_schema)
+        json_schema_row.addWidget(clear_schema)
+
         main_part = QWidget()
         main_layout = QFormLayout(main_part)
         main_layout.setAlignment(
             Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
         main_layout.addRow('Source:', self.source)
         main_layout.addRow('Model:', self.openai_model_name)
-        main_layout.addRow("Schema:", self.json_schema_path)
+        main_layout.addRow("Schema:", json_schema_row)
         main_layout.addRow('Progress:', self.pbar)
         main_layout.addRow('Result:', self.ocr_result)
         self.setCentralWidget(main_part)
@@ -59,13 +74,13 @@ class MyWindow(QMainWindow):
 
     def create_menu_bar(self):
         # Settings menu
-        config_openai = QAction('&OpenAI model', self)
+        config_openai = QAction('Config &OpenAI model', self)
         config_openai.triggered.connect(self.config_openai)
-        json_schema_existed = QAction("Output schema: open &existed", self)
-        json_schema_existed.triggered.connect(self.existed_json_schema)
-        json_schema_new = QAction("Output schema: &new", self)
-        json_schema_new.triggered.connect(self.new_json_schema)
-        max_retries = QAction("&Max &retries", self)
+        download_json_schema_editor_ = QAction("Download &JSON schema editor", self)
+        download_json_schema_editor_.triggered.connect(download_json_schema_editor)
+        json_schema_ = QAction("Config OpenAI output &schema", self)
+        json_schema_.triggered.connect(self.set_schema)
+        max_retries = QAction("Set &max retries", self)
         max_retries.triggered.connect(self.set_max_retries)
 
         # Recognize menu
@@ -78,10 +93,10 @@ class MyWindow(QMainWindow):
         reco_clipboard.setShortcut('Ctrl+Shift+V')
 
         # First-level buttons
-        settings = QMenu('&Config', self)
+        settings = QMenu('&Settings', self)
         settings.addActions([
             # disabled: max_retries
-            config_openai, json_schema_existed, json_schema_new,
+            config_openai, json_schema_, download_json_schema_editor_,
         ])
         recognize = QMenu('&Recognize', self)
         recognize.addActions([reco_folder, reco_file, reco_clipboard])
@@ -91,6 +106,23 @@ class MyWindow(QMainWindow):
         menu.addMenu(settings)
         menu.addMenu(recognize)
         self.setMenuBar(menu)
+
+    def set_schema(self):
+        fp, ok = QFileDialog.getOpenFileName(filter='Output schema (*.json)')
+        if ok:
+            self.json_schema_path.setText(fp)
+            try:
+                with open(fp, "r") as f:
+                    self.json_schema = json.load(f)
+            except (FileNotFoundError, json.JSONDecodeError):
+                self.silent_message(
+                    "warn", "OCR Engine",
+                    "JSON schema is invalid. Fallback to output plain text."
+                )
+
+    def clear_schema(self):
+        self.json_schema = None
+        self.json_schema_path.setText("")
 
     @staticmethod
     def status_check_decorator(action_name, *args, **kwargs):
@@ -126,18 +158,10 @@ class MyWindow(QMainWindow):
         dist = QFileDialog.getExistingDirectory(
             caption='Export to', options=QFileDialog.Option.ShowDirsOnly)
         os.makedirs(dist, exist_ok=True)
-        try:
-            with open(self.json_schema_path.text(), "r") as f:
-                schema = json.load(f)
-        except (FileNotFoundError, json.JSONDecodeError):
-            self.silent_message(
-                "warn", "OCR Engine", "Output schema is unset or invalid.")
-            self.delayed_thread_finished()
-            return
         self.operator = BatchOCR(
             api_key=self.config["openai_api_key"],
             model_name=self.config["openai_model"],
-            json_schema=schema,
+            output_schema=self.json_schema,
             input_folder=src,
             output_folder=dist,
         )
@@ -170,18 +194,10 @@ class MyWindow(QMainWindow):
             )
             self.delayed_thread_finished()
             return
-        try:
-            with open(self.json_schema_path.text(), "r") as f:
-                schema = json.load(f)
-        except (FileNotFoundError, json.JSONDecodeError):
-            self.silent_message(
-                "warn", "OCR Engine", "Output schema is unset or invalid.")
-            self.delayed_thread_finished()
-            return
         self.operator = OCR(
             api_key=self.config["openai_api_key"],
             model_name=self.config["openai_model"],
-            json_schema=schema,
+            output_schema=self.json_schema,
             data_url=data_url,
         )
         self.operator.start()
@@ -218,18 +234,10 @@ class MyWindow(QMainWindow):
             )
             self.delayed_thread_finished()
             return
-        try:
-            with open(self.json_schema_path.text(), "r") as f:
-                schema = json.load(f)
-        except (FileNotFoundError, json.JSONDecodeError):
-            self.silent_message(
-                "warn", "OCR Engine", "Output schema is unset or invalid.")
-            self.delayed_thread_finished()
-            return
         self.operator = OCR(
             api_key=self.config["openai_api_key"],
             model_name=self.config["openai_model"],
-            json_schema=schema,
+            output_schema=self.json_schema,
             data_url=data_url,
         )
         self.operator.start()
@@ -261,33 +269,6 @@ class MyWindow(QMainWindow):
         self.openai_model_name.setText(config_new["openai_model"])
         self.delayed_thread_finished()
         return
-
-    @status_check_decorator(action_name='Config output schema')
-    def existed_json_schema(self):
-        fp, _ = QFileDialog.getOpenFileName(filter='Output schema (*.json)')
-        dialog = SchemaEditor(fp)
-        if not dialog.initial_valid:
-            self.delayed_thread_finished()
-            return
-        action = dialog.exec()
-        if action != QDialog.DialogCode.Accepted:
-            self.delayed_thread_finished()
-            return
-        self.json_schema_path.setText(dialog.filepath)
-        self.delayed_thread_finished()
-
-    @status_check_decorator(action_name='Config output schema')
-    def new_json_schema(self):
-        dialog = SchemaEditor()
-        if not dialog.initial_valid:
-            self.delayed_thread_finished()
-            return
-        action = dialog.exec()
-        if action != QDialog.DialogCode.Accepted:
-            self.delayed_thread_finished()
-            return
-        self.json_schema_path.setText(dialog.filepath)
-        self.delayed_thread_finished()
 
     def set_max_retries(self):
         max_retries, ok = QInputDialog.getInt(

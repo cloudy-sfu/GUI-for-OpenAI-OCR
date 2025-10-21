@@ -13,13 +13,13 @@ class OCR(QThread):
     result = pyqtSignal(str, name='result')
     done = pyqtSignal(bool, name='done')
 
-    def __init__(self, api_key, model_name, json_schema, data_url):
+    def __init__(self, api_key, model_name, output_schema, data_url):
         super(OCR, self).__init__()
         self.api_key = api_key
         self.model_name = model_name
         self.data_url = data_url
-        self.json_schema = json_schema
-        make_all_fields_required(self.json_schema)
+        self.output_schema = output_schema
+        make_all_fields_required(self.output_schema)
 
     # noinspection PyTypeChecker
     def run(self) -> None:
@@ -27,21 +27,32 @@ class OCR(QThread):
                   "the provided JSON schema.")
         try:
             client = OpenAI(api_key=self.api_key)
-            response = client.chat.completions.create(
-                model=self.model_name,
-                messages=[{"role": "user", "content": [
-                    {"type": "text", "text": prompt},
-                    {"type": "image_url", "image_url": {"url": self.data_url}}
-                ]}],
-                response_format={"type": "json_schema", "json_schema": {
-                    "name": "schema_1",
-                    "strict": True,
-                    "schema": self.json_schema,
-                }},
-                reasoning_effort="minimal",
-            )
-            content = json.loads(response.choices[0].message.content)
-            content = json.dumps(content, indent=4, ensure_ascii=False)
+            if self.output_schema is None:
+                response = client.chat.completions.create(
+                    model=self.model_name,
+                    messages=[{"role": "user", "content": [
+                        {"type": "text", "text": prompt},
+                        {"type": "image_url", "image_url": {"url": self.data_url}}
+                    ]}],
+                    reasoning_effort="minimal",
+                )
+                content = response.choices[0].message.content
+            else:
+                response = client.chat.completions.create(
+                    model=self.model_name,
+                    messages=[{"role": "user", "content": [
+                        {"type": "text", "text": prompt},
+                        {"type": "image_url", "image_url": {"url": self.data_url}}
+                    ]}],
+                    response_format={"type": "json_schema", "json_schema": {
+                        "name": "schema_1",
+                        "strict": True,
+                        "schema": self.output_schema,
+                    }},
+                    reasoning_effort="minimal",
+                )
+                content = json.loads(response.choices[0].message.content)
+                content = json.dumps(content, indent=4, ensure_ascii=False)
         except Exception as e:
             self.error_message.emit(str(e))
         else:
@@ -54,14 +65,15 @@ class BatchOCR(QThread):
     gui_message = pyqtSignal(str, name="gui_message")
     done = pyqtSignal(bool, name='done')
 
-    def __init__(self, api_key, model_name, json_schema, input_folder, output_folder):
+    def __init__(self, api_key, model_name, output_schema, input_folder,
+                 output_folder):
         super(BatchOCR, self).__init__()
         self.api_key = api_key
         self.model_name = model_name
         self.input_folder = input_folder
         self.output_folder = output_folder
-        self.json_schema = json_schema
-        make_all_fields_required(self.json_schema)
+        self.output_schema = output_schema
+        make_all_fields_required(self.output_schema)
 
     # noinspection PyTypeChecker
     def run(self) -> None:
@@ -86,8 +98,6 @@ class BatchOCR(QThread):
         for i, (parent, name) in zip(range(n_files), filenames):
             input_path = os.path.join(parent, name)
             output_image_name, output_image_ext = os.path.splitext(name)
-            output_path = os.path.join(
-                self.output_folder, output_image_name + '.json')
             # OCR
             try:
                 with Image.open(input_path) as img:
@@ -97,24 +107,44 @@ class BatchOCR(QThread):
                     img.save(buf, format=fmt)
                     b64 = base64.b64encode(buf.getvalue()).decode("ascii")
                     data_url = f"data:{mime};base64,{b64}"
-                response = client.chat.completions.create(
-                    model=self.model_name,
-                    messages=[{"role": "user", "content": [
-                        {"type": "text", "text": prompt},
-                        {"type": "image_url", "image_url": {"url": data_url}}
-                    ]}],
-                    response_format={"type": "json_schema", "json_schema": {
-                        "name": "schema_1",
-                        "schema": self.json_schema,
-                    }},
-                    reasoning_effort="minimal",
-                )
-                content = json.loads(response.choices[0].message.content)
+                if self.output_schema is None:
+                    response = client.chat.completions.create(
+                        model=self.model_name,
+                        messages=[{"role": "user", "content": [
+                            {"type": "text", "text": prompt},
+                            {"type": "image_url", "image_url": {"url": data_url}}
+                        ]}],
+                        reasoning_effort="minimal",
+                    )
+                    content = response.choices[0].message.content
+                else:
+                    response = client.chat.completions.create(
+                        model=self.model_name,
+                        messages=[{"role": "user", "content": [
+                            {"type": "text", "text": prompt},
+                            {"type": "image_url", "image_url": {"url": data_url}}
+                        ]}],
+                        response_format={"type": "json_schema", "json_schema": {
+                            "name": "schema_1",
+                            "strict": True,
+                            "schema": self.output_schema,
+                        }},
+                        reasoning_effort="minimal",
+                    )
+                    content = json.loads(response.choices[0].message.content)
             except Exception as e:
                 self.gui_message.emit(f"{input_path} - {e}")
             else:
-                with open(output_path, 'w') as f:
-                    json.dump(content, f, indent=4, ensure_ascii=False)
+                if self.output_schema is None:
+                    output_path = os.path.join(
+                        self.output_folder, output_image_name + '.json')
+                    with open(output_path, "w") as f:
+                        f.write(content)
+                else:
+                    output_path = os.path.join(
+                        self.output_folder, output_image_name + '.txt')
+                    with open(output_path, 'w') as f:
+                        json.dump(content, f, indent=4, ensure_ascii=False)
             progress_percentage = int((i + 1) / n_files * 100)
             self.progress.emit(progress_percentage)
         os.startfile(self.output_folder)

@@ -1,7 +1,0 @@
-{
-    "userId": "not-an-integer",
-    "personalInfo": {
-        "height_m": "not-a-number"
-    },
-    "tags": [true, {"a": 1}]
-}
