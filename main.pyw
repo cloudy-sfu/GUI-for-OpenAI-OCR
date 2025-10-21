@@ -3,22 +3,17 @@ import io
 import json
 import os
 import sys
+import webbrowser
 from functools import partial
 
 from PIL import Image
-from PyQt6.QtCore import Qt, QBuffer, QByteArray, QIODevice, QUrl
-from PyQt6.QtGui import QAction, QDesktopServices
+from PyQt6.QtCore import Qt, QBuffer, QByteArray, QIODevice
+from PyQt6.QtGui import QAction
 from PyQt6.QtWidgets import *
 
 from config import Config
 from ocr import OCR, BatchOCR
 from open_ai_config_dialog import OpenAIConfigDialog
-
-
-def download_json_schema_editor():
-    QDesktopServices.openUrl(QUrl(
-        "https://github.com/cloudy-sfu/JSON-schema-editor"
-    ))
 
 
 class MyWindow(QMainWindow):
@@ -77,7 +72,12 @@ class MyWindow(QMainWindow):
         config_openai = QAction('Config &OpenAI model', self)
         config_openai.triggered.connect(self.config_openai)
         download_json_schema_editor_ = QAction("Download &JSON schema editor", self)
-        download_json_schema_editor_.triggered.connect(download_json_schema_editor)
+        download_json_schema_editor_.triggered.connect(
+            partial(
+                webbrowser.open,
+                "https://github.com/cloudy-sfu/JSON-schema-editor"
+            )
+        )
         json_schema_ = QAction("Config OpenAI output &schema", self)
         json_schema_.triggered.connect(self.set_schema)
         max_retries = QAction("Set &max retries", self)
