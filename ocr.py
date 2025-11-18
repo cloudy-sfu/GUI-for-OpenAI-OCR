@@ -23,15 +23,15 @@ class OCR(QThread):
 
     # noinspection PyTypeChecker
     def run(self) -> None:
-        prompt = ("Perform OCR on this image and return data that strictly conforms to "
-                  "the provided JSON schema.")
         try:
             client = OpenAI(api_key=self.api_key)
             if self.output_schema is None:
                 response = client.chat.completions.create(
                     model=self.model_name,
                     messages=[{"role": "user", "content": [
-                        {"type": "text", "text": prompt},
+                        {"type": "text", 
+                         "text": "Perform OCR on this image and return recognized "
+                         "text."},
                         {"type": "image_url", "image_url": {"url": self.data_url}}
                     ]}],
                     reasoning_effort="minimal",
@@ -41,7 +41,9 @@ class OCR(QThread):
                 response = client.chat.completions.create(
                     model=self.model_name,
                     messages=[{"role": "user", "content": [
-                        {"type": "text", "text": prompt},
+                        {"type": "text", 
+                         "text": "Perform OCR on this image and return data that "
+                         "strictly conforms to the provided JSON schema."},
                         {"type": "image_url", "image_url": {"url": self.data_url}}
                     ]}],
                     response_format={"type": "json_schema", "json_schema": {
